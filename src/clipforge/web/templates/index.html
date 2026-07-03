@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ClipForge</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>ClipForge</h1>
+    <p class="tagline">URL &rarr; transcribe &rarr; score &rarr; vertical clips</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>New job</h2>
+      <form id="job-form">
+        <input
+          id="url"
+          name="url"
+          type="text"
+          placeholder="YouTube URL or local file path"
+          autocomplete="off"
+          required
+        />
+        <button type="submit">Enqueue</button>
+      </form>
+      <p id="form-msg" class="msg"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Jobs</h2>
+      <button id="refresh" class="ghost">Refresh</button>
+      <table id="jobs">
+        <thead>
+          <tr><th>Job</th><th>Title / Source</th><th>Status</th><th>Progress</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

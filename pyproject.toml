@@ -1,0 +1,39 @@
+[project]
+name = "clipforge"
+version = "0.1.0"
+description = "Local-first AI video clipper: URL -> transcribe -> LLM scoring -> reframe 9:16 -> captions -> MP4"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "yt-dlp",
+    "faster-whisper",
+    "google-genai",
+    "opencv-python",
+    "mediapipe",
+    "python-dotenv",
+    "jinja2",
+    "sse-starlette",
+    "httpx",
+    # CUDA runtime libs required by faster-whisper (CTranslate2) on GTX 1060
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clipforge"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
