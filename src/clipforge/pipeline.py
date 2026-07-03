@@ -103,7 +103,7 @@ VALID_CAPTION_STYLES = {"bold", "clean"}
 VALID_HOOK_MODES = {"3s", "full"}
 
 # settings-table keys that map 1:1 onto a Config field of the same name.
-_SETTING_STR_FIELDS = ("llm_provider", "gemini_model", "whisper_model")
+_SETTING_STR_FIELDS = ("llm_provider", "gemini_model", "anthropic_model", "whisper_model")
 _SETTING_INT_FIELDS = ("num_clips", "clip_min_s", "clip_max_s")
 
 

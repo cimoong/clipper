@@ -10,6 +10,7 @@ dependencies = [
     "yt-dlp",
     "faster-whisper",
     "google-genai",
+    "anthropic",
     "opencv-python",
     "mediapipe",
     "python-dotenv",

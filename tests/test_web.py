@@ -297,6 +297,7 @@ def test_settings_page_renders_with_masked_key(client: TestClient) -> None:
 _VALID_SETTINGS = {
     "llm_provider": "gemini",
     "gemini_model": "gemini-x",
+    "anthropic_model": "claude-sonnet-5",
     "whisper_model": "small",
     "num_clips": "4",
     "clip_min_s": "20",
@@ -316,6 +317,37 @@ def test_settings_post_persists(client: TestClient) -> None:
         assert db.get_setting(conn, "num_clips") == "4"
         assert db.get_setting(conn, "caption_style") == "clean"
         assert db.get_setting(conn, "gemini_model") == "gemini-x"
+    finally:
+        conn.close()
+
+
+def test_settings_post_persists_anthropic_provider(client: TestClient) -> None:
+    data = {
+        **_VALID_SETTINGS,
+        "llm_provider": "anthropic",
+        "anthropic_model": "claude-haiku-4-5",
+    }
+    res = client.post("/settings", data=data)
+    assert res.status_code == 200
+    assert "Settings saved" in res.text
+
+    conn = db.connect(client.app_cfg)  # type: ignore[attr-defined]
+    try:
+        assert db.get_setting(conn, "llm_provider") == "anthropic"
+        assert db.get_setting(conn, "anthropic_model") == "claude-haiku-4-5"
+    finally:
+        conn.close()
+
+
+def test_settings_post_rejects_unknown_claude_model(client: TestClient) -> None:
+    bad = {**_VALID_SETTINGS, "anthropic_model": "claude-nope"}
+    res = client.post("/settings", data=bad)
+    assert res.status_code == 200
+    assert "Claude model must be one of" in res.text
+
+    conn = db.connect(client.app_cfg)  # type: ignore[attr-defined]
+    try:
+        assert db.get_setting(conn, "anthropic_model") is None  # nothing persisted
     finally:
         conn.close()
 

@@ -15,6 +15,7 @@
   }
   .settings-form input:disabled { color: var(--muted); font-family: ui-monospace, monospace; }
   .settings-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .settings-form .provider-fields { display: grid; gap: 16px; }
   .settings-form small.hint { font-weight: 400; }
 </style>
 
@@ -32,23 +33,60 @@
   <form method="post" action="/settings" class="settings-form">
     <label>
       <span>LLM provider</span>
-      <select name="llm_provider">
+      <select name="llm_provider" id="llm-provider">
         {% for p in s.providers %}
-        <option value="{{ p }}" {% if p == s.llm_provider %}selected{% endif %}>{{ p }}</option>
+        <option value="{{ p }}" {% if p == s.llm_provider %}selected{% endif %}>
+          {{ "Google Gemini" if p == "gemini" else "Anthropic Claude" }}
+        </option>
         {% endfor %}
       </select>
     </label>
 
-    <label>
-      <span>LLM model</span>
-      <input type="text" name="gemini_model" value="{{ s.gemini_model }}" autocomplete="off" />
-    </label>
+    <div data-provider="gemini" class="provider-fields">
+      <label>
+        <span>Gemini model</span>
+        <input type="text" name="gemini_model" value="{{ s.gemini_model }}" autocomplete="off" />
+      </label>
 
-    <label>
-      <span>API key</span>
-      <input type="text" value="{{ s.api_key_masked }}" disabled />
-      <small class="hint">Read-only &mdash; set via <code>GEMINI_API_KEY</code> in <code>.env</code>.</small>
-    </label>
+      <label>
+        <span>Gemini API key</span>
+        <input type="text" value="{{ s.gemini_key_masked }}" disabled />
+        <small class="hint">Read-only &mdash; set via <code>GEMINI_API_KEY</code> in <code>.env</code>.</small>
+      </label>
+    </div>
+
+    <div data-provider="anthropic" class="provider-fields">
+      <label>
+        <span>Claude model</span>
+        <select name="anthropic_model">
+          {% for m in s.anthropic_models %}
+          <option value="{{ m }}" {% if m == s.anthropic_model %}selected{% endif %}>
+            {{ "Claude Sonnet 5 (kualitas)" if m == "claude-sonnet-5" else "Claude Haiku 4.5 (cepat/murah)" }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>Anthropic API key</span>
+        <input type="text" value="{{ s.anthropic_key_masked }}" disabled />
+        <small class="hint">Read-only &mdash; set via <code>ANTHROPIC_API_KEY</code> in <code>.env</code>
+        (dari <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>).</small>
+      </label>
+    </div>
+
+    <script>
+      (function () {
+        var provider = document.getElementById("llm-provider");
+        function toggle() {
+          document.querySelectorAll(".provider-fields").forEach(function (el) {
+            el.style.display = el.dataset.provider === provider.value ? "" : "none";
+          });
+        }
+        provider.addEventListener("change", toggle);
+        toggle();
+      })();
+    </script>
 
     <label>
       <span>Whisper model</span>

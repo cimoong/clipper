@@ -65,7 +65,13 @@ def test_generate_metadata_uses_injected_llm() -> None:
                     {
                         "index": 0,
                         "suggested_description": "Big lesson here. It cost a fortune. Follow for more.",
-                        "hashtags": ["#Startup", "#money tips", "#business", "#founder", "#lessons"],
+                        "hashtags": [
+                            "#Startup",
+                            "#money tips",
+                            "#business",
+                            "#founder",
+                            "#lessons",
+                        ],
                     },
                     {
                         "index": 1,

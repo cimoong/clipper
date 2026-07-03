@@ -5,9 +5,10 @@ stage), render each segment as a timestamped line, ask the LLM to pick the most
 viral-worthy 25-75s segments, then validate/snap/dedupe the result before
 writing ``data/sources/{job_id}/candidates.json``.
 
-The LLM (Gemini via the ``google-genai`` SDK) is only ever reached through the
-injectable ``llm`` callable, so the validation/snap/dedupe logic can be tested
-with a fake transcript and a fake response — no network and no API key.
+The LLM (Gemini or Claude, per ``LLM_PROVIDER`` — see :mod:`clipforge.llm`) is
+only ever reached through the injectable ``llm`` callable, so the
+validation/snap/dedupe logic can be tested with a fake transcript and a fake
+response — no network and no API key.
 
 Run standalone against an already-transcribed job:
 
@@ -28,7 +29,7 @@ from .config import Config
 logger = logging.getLogger(__name__)
 
 # A callable that takes the fully-rendered prompt and returns the raw model text.
-# Injecting this lets tests feed a canned response instead of calling Gemini.
+# Injecting this lets tests feed a canned response instead of calling the LLM.
 LLMCall = Callable[[str], str]
 
 # Videos longer than this are analyzed in chunks to keep the prompt (and the
@@ -165,30 +166,14 @@ def _chunk_segments(segments: list[dict[str, Any]]) -> list[list[dict[str, Any]]
 # --------------------------------------------------------------------------- #
 
 
-def _gemini_call(cfg: Config) -> LLMCall:
-    """Build the default LLM callable that talks to Gemini via google-genai."""
-    if not cfg.gemini_api_key:
-        raise AnalyzeError("GEMINI_API_KEY is not set; cannot call the scoring model.")
+def _default_call(cfg: Config) -> LLMCall:
+    """Build the scoring LLM callable for the configured provider (Gemini/Claude)."""
+    from . import llm
 
-    # Imported lazily so tests (which inject their own callable) never need the SDK.
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=cfg.gemini_api_key)
-
-    def _call(prompt: str) -> str:
-        resp = client.models.generate_content(
-            model=cfg.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SCORING_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
-        )
-        return resp.text or ""
-
-    return _call
+    try:
+        return llm.build_llm_call(cfg, system_prompt=SCORING_PROMPT, temperature=0.2)
+    except llm.LLMError as exc:
+        raise AnalyzeError(str(exc)) from exc
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -376,11 +361,11 @@ def analyze(job_id: str, cfg: Config, *, llm: LLMCall | None = None) -> list[Can
     Loads the transcript, renders it for the LLM (chunking videos longer than 30
     minutes with a 2-minute overlap), scores each chunk, then validates, snaps,
     and dedupes the candidates. Pass ``llm`` to inject a fake response for tests;
-    otherwise the default Gemini callable is used. Raises :class:`AnalyzeError`
-    on any failure.
+    otherwise the configured provider's callable is used (see
+    :mod:`clipforge.llm`). Raises :class:`AnalyzeError` on any failure.
     """
     segments = _load_segments(job_id, cfg)
-    call = llm if llm is not None else _gemini_call(cfg)
+    call = llm if llm is not None else _default_call(cfg)
 
     chunks = _chunk_segments(segments)
     logger.info(

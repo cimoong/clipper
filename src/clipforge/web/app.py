@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from .. import db, pipeline
+from .. import db, llm, pipeline
 from ..config import Config
 from ..queue import JobQueue
 from .schemas import (
@@ -144,16 +144,17 @@ def _fmt_duration(start: object, end: object) -> str:
 
 # Options offered by the settings form (kept in sync with the pipeline's
 # validators). LLM provider is limited to what the pipeline actually supports.
-_PROVIDERS = ["gemini"]
+_PROVIDERS = list(llm.PROVIDERS)
+_ANTHROPIC_MODELS = list(llm.ANTHROPIC_MODELS)
 _WHISPER_MODELS = ["tiny", "base", "small", "medium"]
 _CAPTION_STYLES = sorted(pipeline.VALID_CAPTION_STYLES)
 _HOOK_MODES = ["3s", "full"]
 
 
-def _mask_key(value: str) -> str:
+def _mask_key(value: str, env_var: str) -> str:
     """Mask an API key for display (never render it in full)."""
     if not value:
-        return "(not set — configure GEMINI_API_KEY in .env)"
+        return f"(not set — configure {env_var} in .env)"
     if len(value) <= 8:
         return "•" * len(value)
     return f"{value[:4]}…{value[-4:]}"
@@ -169,14 +170,17 @@ def _settings_vm(conn: Connection, cfg: Config) -> dict[str, object]:
     return {
         "llm_provider": val("llm_provider", cfg.llm_provider),
         "gemini_model": val("gemini_model", cfg.gemini_model),
+        "anthropic_model": val("anthropic_model", cfg.anthropic_model),
         "whisper_model": val("whisper_model", cfg.whisper_model),
         "num_clips": int(val("num_clips", cfg.num_clips)),  # type: ignore[arg-type]
         "clip_min_s": int(val("clip_min_s", cfg.clip_min_s)),  # type: ignore[arg-type]
         "clip_max_s": int(val("clip_max_s", cfg.clip_max_s)),  # type: ignore[arg-type]
         "caption_style": val("caption_style", "bold"),
         "hook_mode": val("hook_mode", "3s"),
-        "api_key_masked": _mask_key(cfg.gemini_api_key),
+        "gemini_key_masked": _mask_key(cfg.gemini_api_key, "GEMINI_API_KEY"),
+        "anthropic_key_masked": _mask_key(cfg.anthropic_api_key, "ANTHROPIC_API_KEY"),
         "providers": _PROVIDERS,
+        "anthropic_models": _ANTHROPIC_MODELS,
         "whisper_models": _WHISPER_MODELS,
         "caption_styles": _CAPTION_STYLES,
         "hook_modes": _HOOK_MODES,
@@ -192,6 +196,7 @@ def _validate_settings(
     caption_style: str,
     hook_mode: str,
     llm_provider: str,
+    anthropic_model: str,
 ) -> str | None:
     """Return an error message for invalid settings, or ``None`` if all valid."""
     if num_clips < 1:
@@ -208,6 +213,8 @@ def _validate_settings(
         return f"Hook mode must be one of: {', '.join(_HOOK_MODES)}."
     if llm_provider not in _PROVIDERS:
         return f"LLM provider must be one of: {', '.join(_PROVIDERS)}."
+    if anthropic_model not in _ANTHROPIC_MODELS:
+        return f"Claude model must be one of: {', '.join(_ANTHROPIC_MODELS)}."
     return None
 
 
@@ -297,6 +304,7 @@ def _register_routes(app: FastAPI) -> None:
         request: Request,
         llm_provider: str = Form(...),
         gemini_model: str = Form(...),
+        anthropic_model: str = Form(...),
         whisper_model: str = Form(...),
         num_clips: int = Form(...),
         clip_min_s: int = Form(...),
@@ -315,11 +323,13 @@ def _register_routes(app: FastAPI) -> None:
             caption_style=caption_style,
             hook_mode=hook_mode,
             llm_provider=llm_provider,
+            anthropic_model=anthropic_model,
         )
         if error is None:
             values = {
                 "llm_provider": llm_provider.strip(),
                 "gemini_model": gemini_model.strip(),
+                "anthropic_model": anthropic_model,
                 "whisper_model": whisper_model,
                 "num_clips": str(num_clips),
                 "clip_min_s": str(clip_min_s),

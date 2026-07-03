@@ -34,8 +34,10 @@ class Config:
     """Resolved runtime configuration for ClipForge."""
 
     gemini_api_key: str = ""
+    anthropic_api_key: str = ""
     llm_provider: str = "gemini"
     gemini_model: str = "gemini-2.5-flash"
+    anthropic_model: str = "claude-sonnet-5"
     whisper_model: str = "small"
     whisper_device: str = "auto"
     num_clips: int = 8
@@ -49,8 +51,10 @@ class Config:
         load_dotenv(dotenv_path=env_file, override=False)
         return cls(
             gemini_api_key=_get_str("GEMINI_API_KEY", ""),
+            anthropic_api_key=_get_str("ANTHROPIC_API_KEY", ""),
             llm_provider=_get_str("LLM_PROVIDER", "gemini"),
             gemini_model=_get_str("GEMINI_MODEL", "gemini-2.5-flash"),
+            anthropic_model=_get_str("ANTHROPIC_MODEL", "claude-sonnet-5"),
             whisper_model=_get_str("WHISPER_MODEL", "small"),
             whisper_device=_get_str("WHISPER_DEVICE", "auto"),
             num_clips=_get_int("NUM_CLIPS", 8),
@@ -75,7 +79,7 @@ def _mask_secret(value: str) -> str:
 
 def format_config(config: Config) -> str:
     """Render the config for printing, masking secret fields."""
-    secret_fields = {"gemini_api_key"}
+    secret_fields = {"gemini_api_key", "anthropic_api_key"}
     lines = ["ClipForge config:"]
     for field in fields(config):
         raw = getattr(config, field.name)

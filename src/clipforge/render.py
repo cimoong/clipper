@@ -136,7 +136,9 @@ def _load_words(job_id: str, cfg: Config) -> list[Word]:
             continue
         for w in seg.get("words", []):
             try:
-                words.append(Word(word=str(w["word"]), start=float(w["start"]), end=float(w["end"])))
+                words.append(
+                    Word(word=str(w["word"]), start=float(w["start"]), end=float(w["end"]))
+                )
             except (KeyError, TypeError, ValueError):
                 continue  # skip malformed words rather than fail the clip
     return words
@@ -151,29 +153,14 @@ load_words = _load_words
 # --------------------------------------------------------------------------- #
 
 
-def _meta_gemini_call(cfg: Config) -> LLMCall:
-    """Build the default metadata LLM callable (Gemini via google-genai)."""
-    if not cfg.gemini_api_key:
-        raise RenderError("GEMINI_API_KEY is not set; cannot generate clip metadata.")
+def _meta_llm_call(cfg: Config) -> LLMCall:
+    """Build the metadata LLM callable for the configured provider (Gemini/Claude)."""
+    from . import llm
 
-    from google import genai
-    from google.genai import types
-
-    client = genai.Client(api_key=cfg.gemini_api_key)
-
-    def _call(prompt: str) -> str:
-        resp = client.models.generate_content(
-            model=cfg.gemini_model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=META_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.4,
-            ),
-        )
-        return resp.text or ""
-
-    return _call
+    try:
+        return llm.build_llm_call(cfg, system_prompt=META_PROMPT, temperature=0.4)
+    except llm.LLMError as exc:
+        raise RenderError(str(exc)) from exc
 
 
 def _meta_prompt(candidates: list[dict[str, Any]]) -> str:
@@ -284,7 +271,7 @@ def generate_metadata(
         return [_fallback_meta(c) for c in candidates]
 
     try:
-        call = llm if llm is not None else _meta_gemini_call(cfg)
+        call = llm if llm is not None else _meta_llm_call(cfg)
         by_index = _request_meta(_meta_prompt(candidates), call, len(candidates))
     except RenderError as exc:
         logger.warning("%s Falling back to offline metadata.", exc)
@@ -398,9 +385,7 @@ def render_clip(
     meta_path = out_dir / f"clip_{index:02d}.meta.json"
 
     # Always (re)write the cheap sidecar metadata.
-    meta_path.write_text(
-        json.dumps(meta.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    meta_path.write_text(json.dumps(meta.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
 
     if final.is_file():
         logger.info("clip %d already rendered, skipping: %s", index, final.name)
