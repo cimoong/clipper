@@ -2,10 +2,12 @@
 
     python -m clipforge run <url_or_path> [--no-llm]
     python -m clipforge resume <job_id> [--no-llm]
+    python -m clipforge cleanup [--days N]
 
 ``run`` starts a fresh job (download -> transcribe -> analyze -> cut) and writes
 ``data/outputs/{job_id}/results.json``. ``resume`` continues an existing job from
-its first incomplete stage using the checkpoint in ``state.json``.
+its first incomplete stage using the checkpoint in ``state.json``. ``cleanup``
+deletes source videos older than N days (keeps rendered clips and the database).
 
 ``--no-llm`` skips the LLM analysis and instead emits a single fake candidate
 covering seconds 0-3, so the whole pipeline can be exercised offline.
@@ -19,7 +21,7 @@ import sys
 from typing import Any
 
 from .config import Config
-from .pipeline import PipelineError, resume_job, run_new
+from .pipeline import PipelineError, cleanup_sources, resume_job, run_new
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,6 +42,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-llm",
         action="store_true",
         help="Force offline analysis when resuming into the analyze stage.",
+    )
+
+    p_clean = sub.add_parser(
+        "cleanup", help="Delete source videos older than N days (keeps outputs + db)."
+    )
+    p_clean.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help="Delete data/sources folders untouched for more than this many days (default 30).",
     )
 
     return parser
@@ -63,6 +75,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     cfg = Config.load()
+
+    if args.command == "cleanup":
+        if args.days < 0:
+            parser.error("--days must be >= 0")
+        removed = cleanup_sources(cfg, days=args.days)
+        print(f"Removed {len(removed)} source folder(s) older than {args.days} day(s).")
+        for job_id in removed:
+            print(f"  {job_id}")
+        return 0
 
     try:
         if args.command == "run":

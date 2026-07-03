@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}{{ job.label or job.id }} &middot; ClipForge{% endblock %}
+
+{% block main %}
+<p><a class="back" href="/">&larr; All jobs</a></p>
+
+<section class="panel job-head">
+  <h2>{{ job.label or job.id }}</h2>
+  <p class="meta">
+    <span class="badge {{ job.status }}">{{ job.status }}</span>
+    <span>{{ clips|length }} clip{{ "" if clips|length == 1 else "s" }}</span>
+  </p>
+  <div class="reanalyze">
+    <button class="btn"
+            hx-post="/api/jobs/{{ job.id }}/reanalyze"
+            hx-swap="none"
+            hx-on::after-request="if (!event.detail.successful) { document.getElementById('reanalyze-msg').textContent = 'Re-analyze failed: ' + event.detail.xhr.responseText; }">
+      Re-analyze with current settings
+    </button>
+    <a class="hint-link" href="/settings">Adjust settings</a>
+    <span id="reanalyze-msg" class="err"></span>
+  </div>
+  <p class="hint">Re-scores the cached transcript into a new job version &mdash; no
+  re-download or re-transcribe.</p>
+</section>
+
+{% if job.is_failed %}
+<section class="panel error-card">
+  <h2>&#9888; This job failed</h2>
+  <p>It stopped at stage <strong>{{ job.error_stage or "?" }}</strong>{% if job.error %}: {{ job.error }}{% endif %}</p>
+  <p class="hint">Retry resumes from the failed stage &mdash; the stages that already
+  finished are not re-run.</p>
+  <button class="retry"
+          hx-post="/api/jobs/{{ job.id }}/retry"
+          hx-swap="none"
+          hx-on::after-request="if (event.detail.successful) window.location.reload()">
+    Retry from failed stage
+  </button>
+</section>
+{% endif %}
+
+{% if clips %}
+<div class="clip-grid">
+  {% for clip in clips %}{% include "_clip_card.html" %}{% endfor %}
+</div>
+{% else %}
+<p class="empty">
+  No clips yet.{% if not job.is_terminal %} This job is still processing &mdash; reload to check again.{% endif %}
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<dialog id="preview-modal">
+  <div class="modal-head">
+    <span id="preview-title"></span>
+    <button id="preview-close" aria-label="Close">&#10005;</button>
+  </div>
+  <video id="preview-video" controls playsinline></video>
+</dialog>
+<script src="/static/modal.js"></script>
+{% endblock %}

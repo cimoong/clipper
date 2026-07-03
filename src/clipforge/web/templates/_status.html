@@ -1,0 +1,23 @@
+{#- Inner content of a job row's status cell. Rendered on first paint and,
+    for in-progress jobs, re-rendered and pushed over SSE (`progress` event)
+    so htmx's sse-swap can replace it live. Keep it self-contained. -#}
+{%- if job.is_failed %}
+<div class="job-error">
+  <span class="badge FAILED">FAILED</span>
+  <span class="err-stage">at stage <strong>{{ job.error_stage or "?" }}</strong></span>
+  {%- if job.error %}
+  <span class="err" title="{{ job.error }}">{{ job.error }}</span>
+  {%- endif %}
+  <button class="retry"
+          hx-post="/api/jobs/{{ job.id }}/retry"
+          hx-target="#job-{{ job.id }}"
+          hx-swap="outerHTML">Retry</button>
+</div>
+{%- else %}
+<span class="badge {{ job.status }}">{{ job.status }}</span>
+<div class="bar"><span style="width:{{ job.progress }}%"></span></div>
+<span class="pct">{{ job.progress }}%</span>
+{%- if job.is_done %}
+<a class="view-link" href="/jobs/{{ job.id }}">View clips &rarr;</a>
+{%- endif %}
+{%- endif %}

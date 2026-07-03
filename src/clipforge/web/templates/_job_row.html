@@ -1,0 +1,17 @@
+{#- One row in the dashboard job table. Terminal jobs render static status;
+    active jobs wrap the status cell in an SSE-connected element that swaps in
+    fresh `_status.html` on every `progress` event and closes on `close`. -#}
+<tr id="job-{{ job.id }}">
+  <td class="job-id"><a href="/jobs/{{ job.id }}">{{ job.id_short }}</a></td>
+  <td>{{ job.label }}</td>
+  <td class="status-cell">
+    {%- if job.is_terminal %}
+    <div>{% include "_status.html" %}</div>
+    {%- else %}
+    <div hx-ext="sse"
+         sse-connect="/api/jobs/{{ job.id }}/events"
+         sse-swap="progress"
+         sse-close="close">{% include "_status.html" %}</div>
+    {%- endif %}
+  </td>
+</tr>

@@ -1,0 +1,26 @@
+{#- Editable hook-caption block for one clip. Submitting the form PATCHes the
+    caption and swaps this whole block back in (with `show_rerender=True`) so a
+    "Re-render" button appears. Re-render POSTs and swaps the block again. -#}
+<div class="caption" id="cap-{{ clip.id }}">
+  <form hx-patch="/clips/{{ clip.id }}/caption"
+        hx-target="#cap-{{ clip.id }}"
+        hx-swap="outerHTML">
+    <input class="cap-input"
+           type="text"
+           name="hook_caption"
+           value="{{ clip.hook_caption }}"
+           maxlength="60"
+           placeholder="Hook caption"
+           aria-label="Hook caption" />
+    <button class="cap-save" type="submit">Save</button>
+  </form>
+  {%- if show_rerender %}
+  <button class="rerender"
+          hx-post="/clips/{{ clip.id }}/rerender"
+          hx-target="#cap-{{ clip.id }}"
+          hx-swap="outerHTML">Re-render</button>
+  {%- endif %}
+  {%- if note %}
+  <span class="cap-note">{{ note }}</span>
+  {%- endif %}
+</div>

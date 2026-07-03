@@ -14,6 +14,7 @@ dependencies = [
     "mediapipe",
     "python-dotenv",
     "jinja2",
+    "python-multipart",
     "sse-starlette",
     "httpx",
     # CUDA runtime libs required by faster-whisper (CTranslate2) on GTX 1060

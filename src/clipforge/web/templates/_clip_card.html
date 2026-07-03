@@ -1,0 +1,33 @@
+{#- One clip card in the results grid: thumbnail + score badge, title,
+    editable hook caption, duration / source timestamp, and Preview/Download. -#}
+<article class="card">
+  <div class="thumb">
+    {%- if clip.has_thumb %}
+    <img src="/api/clips/{{ clip.id }}/thumb" alt="Clip thumbnail" loading="lazy" />
+    {%- else %}
+    <div class="thumb-ph">no thumbnail</div>
+    {%- endif %}
+    <span class="score {{ clip.score_class }}">{{ clip.score if clip.score is not none else "—" }}</span>
+  </div>
+
+  <div class="body">
+    <h3 class="clip-title">{{ clip.title }}</h3>
+
+    {% include "_caption.html" %}
+
+    <p class="clip-meta">
+      <span>&#9201; {{ clip.duration_str }}</span>
+      <span>@ {{ clip.start_str }}</span>
+    </p>
+
+    <div class="actions">
+      {%- if clip.has_file %}
+      <button class="btn preview" data-src="/api/clips/{{ clip.id }}/file" data-title="{{ clip.title }}">&#9654; Preview</button>
+      <a class="btn dl" href="/api/clips/{{ clip.id }}/file" download>&#8681; Download</a>
+      {%- else %}
+      <button class="btn preview" disabled>&#9654; Preview</button>
+      <span class="btn dl disabled">&#8681; Download</span>
+      {%- endif %}
+    </div>
+  </div>
+</article>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}ClipForge{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .topnav { margin-top: 10px; }
+    .topnav a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+    .topnav a:hover { text-decoration: underline; }
+    .reanalyze { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+    .hint-link { color: var(--muted); font-size: 0.85rem; }
+  </style>
+  <script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/"><h1>ClipForge</h1></a>
+    <p class="tagline">URL &rarr; transcribe &rarr; score &rarr; vertical clips</p>
+    <nav class="topnav"><a href="/settings">Settings</a></nav>
+  </header>
+
+  <main>{% block main %}{% endblock %}</main>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -21,14 +21,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from . import db, render
 from .analyze import analyze
 from .config import Config
 from .cut import cut_clips, cut_one_clip
@@ -45,6 +48,110 @@ STAGES: tuple[str, ...] = ("download", "transcribe", "analyze", "cut", "render")
 # where ``stage_index`` is the 0-based position of ``stage`` in :data:`STAGES`.
 # The queue worker uses this to write live status + percent to the jobs table.
 ProgressFn = Callable[[str, int, int], None]
+
+# Transient-failure retry policy. A stage that fails with a *transient* error
+# (network blip, LLM rate-limit / timeout) is retried once after a short delay
+# before the failure is surfaced; permanent errors (bad URL, missing API key,
+# unsupported format) are never retried. ``RETRY_DELAY_S`` is a module global so
+# tests can drop it to 0.
+STAGE_RETRIES = 1
+RETRY_DELAY_S = 5.0
+
+# Substrings (matched case-insensitively against the error message) that mark a
+# failure as transient and therefore worth one automatic retry.
+_TRANSIENT_MARKERS: tuple[str, ...] = (
+    "network",
+    "connection",
+    "timed out",
+    "timeout",
+    "temporarily",
+    "try again",
+    "rate limit",
+    "ratelimit",
+    "quota",
+    "deadline",
+    "overloaded",
+    "unavailable: the model",  # transient Gemini 503, not "video unavailable"
+    "getaddrinfo",
+    "reset by peer",
+    "unreachable",
+    " 429",
+    " 500",
+    " 502",
+    " 503",
+    " 504",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    """True if ``exc``'s message looks like a retryable network/LLM hiccup."""
+    message = str(exc).lower()
+    return any(marker in message for marker in _TRANSIENT_MARKERS)
+
+
+# --------------------------------------------------------------------------- #
+# Runtime settings overlay
+#
+# The web UI persists tunables (LLM model, num_clips, clip durations, caption
+# style, hook mode) into the SQLite ``settings`` table. Every pipeline run reads
+# them at start and overlays them onto the env-loaded Config, so "re-analyze with
+# current settings" (and any new job) honours the latest saved values without
+# the env / .env being edited. An empty settings table leaves the Config as-is.
+# --------------------------------------------------------------------------- #
+
+VALID_CAPTION_STYLES = {"bold", "clean"}
+VALID_HOOK_MODES = {"3s", "full"}
+
+# settings-table keys that map 1:1 onto a Config field of the same name.
+_SETTING_STR_FIELDS = ("llm_provider", "gemini_model", "whisper_model")
+_SETTING_INT_FIELDS = ("num_clips", "clip_min_s", "clip_max_s")
+
+
+def load_settings(cfg: Config) -> dict[str, Any]:
+    """Read all persisted settings for ``cfg`` (typed), skipping unset keys."""
+    conn = db.connect(cfg)
+    try:
+        out: dict[str, Any] = {}
+        for key in _SETTING_STR_FIELDS + ("caption_style", "hook_mode"):
+            value = db.get_setting(conn, key)
+            if value is not None and value != "":
+                out[key] = value
+        for key in _SETTING_INT_FIELDS:
+            value = db.get_setting(conn, key)
+            if value is None or value == "":
+                continue
+            try:
+                out[key] = int(value)
+            except ValueError:
+                logger.warning("Ignoring non-integer setting %s=%r", key, value)
+        return out
+    finally:
+        conn.close()
+
+
+def effective_config(cfg: Config, settings: dict[str, Any] | None = None) -> Config:
+    """Return ``cfg`` with any saved Config-field settings overlaid on top."""
+    if settings is None:
+        settings = load_settings(cfg)
+    overrides = {
+        key: settings[key] for key in _SETTING_STR_FIELDS + _SETTING_INT_FIELDS if key in settings
+    }
+    return replace(cfg, **overrides) if overrides else cfg
+
+
+def _apply_render_presentation(settings: dict[str, Any]) -> None:
+    """Push caption-style / hook-mode settings into the render module globals.
+
+    ``render`` reads these as module-level constants (there is no Config field for
+    them); the single serial worker means mutating them here is safe. Invalid or
+    unset values leave the render defaults untouched.
+    """
+    style = settings.get("caption_style")
+    if style in VALID_CAPTION_STYLES:
+        render.CAPTION_STYLE = style
+    mode = settings.get("hook_mode")
+    if mode in VALID_HOOK_MODES:
+        render.HOOK_MODE = mode
 
 
 class PipelineError(Exception):
@@ -191,31 +298,57 @@ def _run_analyze(job: Job, cfg: Config) -> None:
     analyze(job.job_id, cfg)
 
 
+def _run_stage_body(job: Job, cfg: Config, stage: str) -> None:
+    """Dispatch a single stage to its module (no timing/retry/checkpointing)."""
+    if stage == "download":
+        result = download(job.source_url, job.job_id, cfg)
+        job.title = result.title
+    elif stage == "transcribe":
+        audio_path = _source_dir(job.job_id, cfg) / "audio.wav"
+        transcribe(audio_path, job.job_id, cfg)
+    elif stage == "analyze":
+        _run_analyze(job, cfg)
+    elif stage == "cut":
+        cut_clips(job.job_id, cfg)
+    elif stage == "render":
+        render_clips(job.job_id, cfg, no_llm=job.no_llm)
+    else:  # pragma: no cover - guards against a typo in STAGES
+        raise PipelineError(stage, f"Unknown stage {stage!r}.", job.job_id)
+
+
 def _execute_stage(job: Job, cfg: Config, stage: str) -> None:
-    """Run one stage, log its timing, and checkpoint on success."""
+    """Run one stage (retrying once on a transient error), time it, checkpoint.
+
+    A transient failure (see :func:`_is_transient`) is retried up to
+    :data:`STAGE_RETRIES` times after a :data:`RETRY_DELAY_S`-second pause;
+    anything else — or a retry that still fails — is wrapped in a
+    :class:`PipelineError` naming the stage so the job can later be resumed.
+    """
     logger.info("--- stage %r: start ---", stage)
     started = time.perf_counter()
-    try:
-        if stage == "download":
-            result = download(job.source_url, job.job_id, cfg)
-            job.title = result.title
-        elif stage == "transcribe":
-            audio_path = _source_dir(job.job_id, cfg) / "audio.wav"
-            transcribe(audio_path, job.job_id, cfg)
-        elif stage == "analyze":
-            _run_analyze(job, cfg)
-        elif stage == "cut":
-            cut_clips(job.job_id, cfg)
-        elif stage == "render":
-            render_clips(job.job_id, cfg, no_llm=job.no_llm)
-        else:  # pragma: no cover - guards against a typo in STAGES
-            raise PipelineError(stage, f"Unknown stage {stage!r}.", job.job_id)
-    except PipelineError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - normalize every stage failure
-        elapsed = time.perf_counter() - started
-        logger.error("--- stage %r: FAILED after %.1fs ---", stage, elapsed)
-        raise PipelineError(stage, str(exc), job.job_id) from exc
+    attempt = 0
+    while True:
+        try:
+            _run_stage_body(job, cfg, stage)
+            break
+        except PipelineError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - normalize every stage failure
+            if attempt < STAGE_RETRIES and _is_transient(exc):
+                attempt += 1
+                logger.warning(
+                    "--- stage %r: transient failure (%s); retry %d/%d in %.0fs ---",
+                    stage,
+                    exc,
+                    attempt,
+                    STAGE_RETRIES,
+                    RETRY_DELAY_S,
+                )
+                time.sleep(RETRY_DELAY_S)
+                continue
+            elapsed = time.perf_counter() - started
+            logger.error("--- stage %r: FAILED after %.1fs ---", stage, elapsed)
+            raise PipelineError(stage, str(exc), job.job_id) from exc
 
     elapsed = time.perf_counter() - started
     logger.info("--- stage %r: done in %.1fs ---", stage, elapsed)
@@ -314,7 +447,15 @@ def _drive(job: Job, cfg: Config, *, progress: ProgressFn | None = None) -> dict
     ``progress`` (when given) is invoked just before each stage starts with the
     stage name, its absolute index in :data:`STAGES`, and the total stage count,
     so a caller can surface live status. It never affects control flow.
+
+    Current UI settings are overlaid onto ``cfg`` here (see
+    :func:`effective_config`), so a re-analyze or a new job always runs with the
+    latest saved LLM model / num_clips / clip durations / caption presentation.
     """
+    settings = load_settings(cfg)
+    cfg = effective_config(cfg, settings)
+    _apply_render_presentation(settings)
+
     start_index = _first_incomplete(job.completed)
     remaining = STAGES[start_index:]
     if remaining:
@@ -431,6 +572,70 @@ def rerender_clip(
     raise PipelineError("render", f"Re-rendered clip {index} missing from results.", job_id)
 
 
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """Hard-link ``src`` to ``dst`` (space-free), copying if linking is impossible."""
+    if dst.exists():
+        return
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
+
+
+def setup_reanalyze_job(
+    orig_job_id: str,
+    cfg: Config,
+    *,
+    source_url: str,
+    title: str = "",
+    no_llm: bool = False,
+    new_id: str | None = None,
+) -> str:
+    """Prepare a NEW job that re-runs analyze -> cut -> render from ``orig_job_id``'s
+    cached transcript, and return its id.
+
+    The new job reuses the original's downloaded video (hard-linked, so no extra
+    disk and no re-download) and its cached ``transcript.json`` (so no
+    re-transcribe). Its ``state.json`` is written with the download + transcribe
+    stages already marked complete, so a subsequent :func:`resume_job` (e.g. via
+    the queue's ``enqueue_resume``) starts straight at the analyze stage and picks
+    up the current UI settings. Raises :class:`PipelineError` if the original's
+    transcript or source video is unavailable.
+    """
+    new_id = new_id or new_job_id()
+    orig_dir = _source_dir(orig_job_id, cfg)
+    transcript = orig_dir / "transcript.json"
+    video = orig_dir / "video.mp4"
+    if not transcript.is_file():
+        raise PipelineError(
+            "analyze",
+            f"No cached transcript for job {orig_job_id}; cannot re-analyze.",
+            new_id,
+        )
+    if not video.is_file():
+        raise PipelineError(
+            "cut",
+            f"Source video for job {orig_job_id} is unavailable (was it cleaned up?).",
+            new_id,
+        )
+
+    new_dir = _source_dir(new_id, cfg)
+    new_dir.mkdir(parents=True, exist_ok=True)
+    _link_or_copy(video, new_dir / "video.mp4")
+    shutil.copyfile(transcript, new_dir / "transcript.json")
+
+    job = Job(
+        job_id=new_id,
+        source_url=source_url,
+        title=title,
+        no_llm=no_llm,
+        completed=["download", "transcribe"],
+    )
+    _save_state(job, cfg)
+    logger.info("Prepared re-analyze job %s from %s", new_id, orig_job_id)
+    return new_id
+
+
 def resume_job(
     job_id: str,
     cfg: Config,
@@ -449,3 +654,51 @@ def resume_job(
         job.no_llm = no_llm
     logger.info("Resuming job %s (completed: %s)", job_id, ", ".join(job.completed) or "none")
     return _drive(job, cfg, progress=progress)
+
+
+# --------------------------------------------------------------------------- #
+# Storage cleanup
+# --------------------------------------------------------------------------- #
+
+
+def _latest_mtime(path: Path) -> float | None:
+    """Newest modification time (epoch seconds) across ``path`` and its tree."""
+    mtimes: list[float] = []
+    try:
+        mtimes.append(path.stat().st_mtime)
+    except OSError:
+        return None
+    for child in path.rglob("*"):
+        try:
+            mtimes.append(child.stat().st_mtime)
+        except OSError:
+            continue
+    return max(mtimes) if mtimes else None
+
+
+def cleanup_sources(cfg: Config, *, days: int, now: datetime | None = None) -> list[str]:
+    """Delete ``data/sources/{job_id}`` folders untouched for more than ``days``.
+
+    Only the (large) source videos / intermediate audio are removed; the finished
+    clips under ``data/outputs`` and the SQLite database are left intact (PRD §9
+    auto-cleanup). A folder's age is its newest file's mtime, so a job still being
+    written is never collected. Returns the removed job-folder names.
+    """
+    if days < 0:
+        raise ValueError("days must be >= 0")
+    sources_root = cfg.data_path / "sources"
+    if not sources_root.is_dir():
+        return []
+
+    cutoff = (now or datetime.now()).timestamp() - days * 86400.0
+    removed: list[str] = []
+    for child in sorted(sources_root.iterdir()):
+        if not child.is_dir():
+            continue
+        mtime = _latest_mtime(child)
+        if mtime is None or mtime >= cutoff:
+            continue
+        shutil.rmtree(child, ignore_errors=True)
+        removed.append(child.name)
+        logger.info("cleanup: removed source folder %s", child)
+    return removed

@@ -17,9 +17,14 @@ import subprocess
 import sys
 import uuid
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
 
 from .config import Config
+
+# yt-dlp ships date-versioned releases (``YYYY.MM.DD``). YouTube regularly breaks
+# older builds, so a release past this age triggers a startup warning.
+YTDLP_STALE_DAYS = 30
 
 
 class DownloadError(Exception):
@@ -197,6 +202,49 @@ def _humanize_ytdlp_error(message: str) -> str:
     # Strip yt-dlp's noisy "ERROR: " prefix for anything we don't specifically map.
     cleaned = message.split("ERROR:", 1)[-1].strip() or message.strip()
     return f"Download failed: {cleaned}"
+
+
+def ytdlp_version() -> str | None:
+    """Return the installed yt-dlp version string, or ``None`` if unavailable."""
+    try:
+        import yt_dlp  # noqa: PLC0415 - lazy so the local-file path needs no yt-dlp
+    except Exception:  # noqa: BLE001 - any import failure means "not usable"
+        return None
+    version = getattr(getattr(yt_dlp, "version", None), "__version__", None)
+    return version or getattr(yt_dlp, "__version__", None)
+
+
+def ytdlp_age_days(version: str | None, *, today: date | None = None) -> int | None:
+    """Age in days of a ``YYYY.MM.DD`` yt-dlp version, or ``None`` if unparseable."""
+    if not version:
+        return None
+    parts = version.split(".")
+    if len(parts) < 3:
+        return None
+    try:
+        released = date(int(parts[0]), int(parts[1]), int(parts[2]))
+    except (TypeError, ValueError):
+        return None
+    return ((today or date.today()) - released).days
+
+
+def check_ytdlp_freshness(*, today: date | None = None) -> str | None:
+    """Return a warning string if yt-dlp is missing or stale, else ``None``.
+
+    Called at startup: a yt-dlp build older than :data:`YTDLP_STALE_DAYS` is a
+    common cause of sudden YouTube download failures, so we nudge the user to
+    ``uv lock --upgrade`` before they hit it.
+    """
+    version = ytdlp_version()
+    if version is None:
+        return "yt-dlp is not installed; remote (YouTube) downloads will fail."
+    age = ytdlp_age_days(version, today=today)
+    if age is not None and age > YTDLP_STALE_DAYS:
+        return (
+            f"yt-dlp {version} is {age} days old. YouTube often breaks older yt-dlp "
+            "builds; update with `uv lock --upgrade-package yt-dlp` (or `uv lock --upgrade`)."
+        )
+    return None
 
 
 def download(url: str, job_id: str, cfg: Config) -> DownloadResult:

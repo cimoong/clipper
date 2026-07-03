@@ -34,7 +34,8 @@ from typing import Any
 
 from . import db
 from .config import Config
-from .pipeline import PipelineError, new_job_id, rerender_clip, run_new
+from .download import check_ytdlp_freshness
+from .pipeline import PipelineError, new_job_id, rerender_clip, resume_job, run_new
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,20 @@ class _NewJob:
 
 
 @dataclass(frozen=True)
+class _Resume:
+    """Queue item: resume a failed/interrupted job from its first incomplete stage."""
+
+    job_id: str
+
+
+@dataclass(frozen=True)
 class _Rerender:
     """Queue item: re-render a single already-rendered clip."""
 
     clip_id: int
 
 
-_Task = _NewJob | _Rerender
+_Task = _NewJob | _Resume | _Rerender
 
 # Maps a pipeline stage name to the job status persisted while it runs. Mirrors
 # the PRD user-flow states; ``cut`` gets its own CUTTING state for clarity.
@@ -83,6 +91,9 @@ class JobQueue:
     async def start(self) -> None:
         """Start the background worker if it is not already running."""
         if self._worker is None or self._worker.done():
+            warning = check_ytdlp_freshness()
+            if warning:
+                logger.warning(warning)
             self._worker = asyncio.create_task(self._run(), name="clipforge-queue-worker")
             logger.info("Job queue worker started.")
 
@@ -135,6 +146,17 @@ class JobQueue:
         logger.info("Enqueued job %s for %r", job_id, source_url)
         return job_id
 
+    def enqueue_resume(self, job_id: str) -> None:
+        """Queue a resume of a failed/interrupted job on the same worker.
+
+        The job is flipped back to ``QUEUED`` immediately so the UI stops showing
+        the failed state; the pipeline then continues from its first incomplete
+        stage using the on-disk ``state.json`` checkpoint.
+        """
+        self._write(lambda c: db.update_job_status(c, job_id, "QUEUED", progress=0.0))
+        self._queue.put_nowait(_Resume(job_id))
+        logger.info("Enqueued resume for job %s", job_id)
+
     def enqueue_rerender(self, clip_id: int) -> None:
         """Queue a single-clip re-render on the same worker (keeps GPU serial).
 
@@ -154,6 +176,8 @@ class JobQueue:
             try:
                 if isinstance(task, _Rerender):
                     await self._process_rerender(task.clip_id)
+                elif isinstance(task, _Resume):
+                    await self._process(task.job_id, resume=True)
                 else:
                     await self._process(task.job_id)
             except Exception:  # noqa: BLE001 - a single task must never kill the worker
@@ -161,8 +185,14 @@ class JobQueue:
             finally:
                 self._queue.task_done()
 
-    async def _process(self, job_id: str) -> None:
-        """Run one job's pipeline, persisting live status and the final result."""
+    async def _process(self, job_id: str, *, resume: bool = False) -> None:
+        """Run (or resume) one job's pipeline, persisting live status + result.
+
+        When ``resume`` is True the pipeline continues from the job's first
+        incomplete stage via its ``state.json`` checkpoint instead of starting a
+        fresh download; either way status/percent are written before each stage
+        and the final clips are recorded on success.
+        """
         job = self._read_job(job_id)
         if job is None:
             logger.error("Job %s vanished before processing; skipping.", job_id)
@@ -175,18 +205,27 @@ class JobQueue:
             percent = round(index / total * 100, 1) if total else 0.0
             self._write(lambda c: db.update_job_status(c, job_id, status, progress=percent))
 
-        loop = asyncio.get_running_loop()
-        try:
-            results = await loop.run_in_executor(
-                None,
-                lambda: run_new(
+        if resume:
+            # Honour the queue's offline flag when set; otherwise keep the value
+            # saved in state.json (no_llm=None leaves it untouched).
+            override = True if self._no_llm else None
+
+            def runner() -> dict[str, Any]:
+                return resume_job(job_id, self._cfg, no_llm=override, progress=on_stage)
+        else:
+
+            def runner() -> dict[str, Any]:
+                return run_new(
                     source_url,
                     self._cfg,
                     no_llm=self._no_llm,
                     job_id=job_id,
                     progress=on_stage,
-                ),
-            )
+                )
+
+        loop = asyncio.get_running_loop()
+        try:
+            results = await loop.run_in_executor(None, runner)
         except PipelineError as exc:
             logger.error("Job %s failed at stage %r: %s", job_id, exc.stage, exc.message)
             message = f"[{exc.stage}] {exc.message}"

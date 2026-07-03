@@ -1,46 +1,35 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ClipForge</title>
-  <link rel="stylesheet" href="/static/style.css" />
-</head>
-<body>
-  <header>
-    <h1>ClipForge</h1>
-    <p class="tagline">URL &rarr; transcribe &rarr; score &rarr; vertical clips</p>
-  </header>
+{% extends "base.html" %}
 
-  <main>
-    <section class="panel">
-      <h2>New job</h2>
-      <form id="job-form">
-        <input
-          id="url"
-          name="url"
-          type="text"
-          placeholder="YouTube URL or local file path"
-          autocomplete="off"
-          required
-        />
-        <button type="submit">Enqueue</button>
-      </form>
-      <p id="form-msg" class="msg"></p>
-    </section>
+{% block main %}
+<section class="panel">
+  <h2>New job</h2>
+  <form id="job-form"
+        hx-post="/jobs"
+        hx-target="#jobs-body"
+        hx-swap="afterbegin"
+        hx-on::after-request="if (event.detail.successful) { this.reset(); const n = document.getElementById('empty-note'); if (n) n.remove(); }">
+    <input
+      id="url"
+      name="url"
+      type="text"
+      placeholder="YouTube URL or local file path"
+      autocomplete="off"
+      required
+    />
+    <button type="submit">Enqueue</button>
+  </form>
+</section>
 
-    <section class="panel">
-      <h2>Jobs</h2>
-      <button id="refresh" class="ghost">Refresh</button>
-      <table id="jobs">
-        <thead>
-          <tr><th>Job</th><th>Title / Source</th><th>Status</th><th>Progress</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-  </main>
-
-  <script src="/static/app.js"></script>
-</body>
-</html>
+<section class="panel">
+  <h2>Jobs</h2>
+  <table id="jobs">
+    <thead>
+      <tr><th>Job</th><th>Title / Source</th><th>Status</th></tr>
+    </thead>
+    <tbody id="jobs-body">
+      {% for job in jobs %}{% include "_job_row.html" %}{% endfor %}
+    </tbody>
+  </table>
+  {% if not jobs %}<p id="empty-note" class="empty">No jobs yet. Paste a URL above to start.</p>{% endif %}
+</section>
+{% endblock %}

@@ -7,6 +7,7 @@
   --accent: #5b8cff;
   --ok: #3ecf8e;
   --fail: #ff6b6b;
+  --warn: #f5c451;
 }
 
 * { box-sizing: border-box; }
@@ -24,6 +25,7 @@ header {
   border-bottom: 1px solid var(--border);
 }
 
+.brand { text-decoration: none; color: inherit; }
 h1 { margin: 0; font-size: 1.6rem; }
 .tagline { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
 
@@ -97,3 +99,131 @@ td.job-id { font-family: ui-monospace, monospace; color: var(--muted); }
 
 .bar { height: 6px; border-radius: 999px; background: #232838; overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+
+/* -- dashboard status cell ------------------------------------------------ */
+.status-cell > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.status-cell .bar { flex: 1; min-width: 70px; }
+.pct { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.view-link { font-size: 0.82rem; color: var(--accent); text-decoration: none; }
+.view-link:hover { text-decoration: underline; }
+.err { font-size: 0.78rem; color: var(--fail); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { color: var(--muted); font-size: 0.9rem; margin: 12px 0 0; }
+
+/* -- results page --------------------------------------------------------- */
+.back { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+.back:hover { color: var(--text); }
+.job-head .meta { display: flex; align-items: center; gap: 12px; margin: 8px 0 0; color: var(--muted); font-size: 0.9rem; }
+
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.thumb {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  background: #0b0d11;
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-ph {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 0.8rem;
+}
+
+.score {
+  position: absolute;
+  top: 8px; left: 8px;
+  min-width: 30px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #0b0d11;
+  background: var(--muted);
+}
+.score.high { background: var(--ok); }
+.score.mid { background: var(--warn); }
+.score.low { background: #6b7280; color: var(--text); }
+
+.body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.clip-title { margin: 0; font-size: 0.98rem; line-height: 1.35; }
+
+.caption { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.caption form { flex: 1 1 100%; display: flex; gap: 6px; }
+.cap-input {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: #11141a;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.cap-save, .rerender {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  border-radius: 7px;
+  border: none;
+  cursor: pointer;
+}
+.cap-save { background: #232838; color: var(--text); }
+.rerender { background: var(--accent); color: #fff; font-weight: 600; }
+.cap-note { font-size: 0.76rem; color: var(--ok); }
+
+.clip-meta { display: flex; gap: 12px; margin: 0; color: var(--muted); font-size: 0.8rem; }
+
+.actions { display: flex; gap: 8px; margin-top: 2px; }
+.btn {
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+}
+.btn.preview { background: #232838; color: var(--text); flex: 1; }
+.btn.dl { background: var(--accent); color: #fff; flex: 1; }
+.btn:disabled, .btn.disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* -- preview modal -------------------------------------------------------- */
+#preview-modal {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0;
+  max-width: min(420px, 92vw);
+  width: 100%;
+}
+#preview-modal::backdrop { background: rgba(0, 0, 0, 0.65); }
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+#preview-close {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 1.1rem; cursor: pointer; padding: 0 4px;
+}
+#preview-video {
+  display: block;
+  width: 100%;
+  max-height: 78vh;
+  background: #000;
+  aspect-ratio: 9 / 16;
+}
